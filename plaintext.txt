@@ -1,0 +1,201 @@
+Kernel programming brings its own, unique debugging challenges. Kernel code cannot
+be easily executed under a debugger, nor can it be easily traced, because it is a set
+of functionalities not related to a specific process. Kernel code errors can also be
+exceedingly hard to reproduce and can bring down the entire system with them, thus
+destroying much of the evidence that could be used to track them down.
+This chapter introduces techniques you can use to monitor kernel code and trace
+errors under such trying circumstances.
+Debugging Support in the Kernel
+In Chapter 2, we recommended that you build and install your own kernel, rather
+than running the stock kernel that comes with your distribution. One of the strongest
+reasons for running your own kernel is that the kernel developers have built several
+debugging features into the kernel itself. These features can create extra output
+and slow performance, so they tend not to be enabled in production kernels from
+distributors. As a kernel developer, however, you have different priorities and will
+gladly accept the (minimal) overhead of the extra kernel debugging support.
+Here, we list the configuration options that should be enabled for kernels used for
+development. Except where specified otherwise, all of these options are found under
+the “kernel hacking” menu in whatever kernel configuration tool you prefer. Note
+that some of these options are not supported by all architectures.
+CONFIG_DEBUG_KERNEL
+This option just makes other debugging options available; it should be turned on
+but does not, by itself, enable any features.
+CONFIG_DEBUG_SLAB
+This crucial option turns on several types of checks in the kernel memory allocation
+functions; with these checks enabled, it is possible to detect a number of
+memory overrun and missing initialization errors. Each byte of allocated memory
+is set to 0xa5 before being handed to the caller and then set to 0x6b when it is
+freed. If you ever see either of those “poison” patterns repeating in output from
+your driver (or often in an oops listing), you’ll know exactly what sort of error to
+look for. When debugging is enabled, the kernel also places special guard values
+before and after every allocated memory object; if those values ever get changed,
+the kernel knows that somebody has overrun a memory allocation, and it complains
+loudly. Various checks for more obscure errors are enabled as well.
+CONFIG_DEBUG_PAGEALLOC
+Full pages are removed from the kernel address space when freed. This option
+can slow things down significantly, but it can also quickly point out certain
+kinds of memory corruption errors.
+CONFIG_DEBUG_SPINLOCK
+With this option enabled, the kernel catches operations on uninitialized spinlocks
+and various other errors (such as unlocking a lock twice).
+CONFIG_DEBUG_SPINLOCK_SLEEP
+This option enables a check for attempts to sleep while holding a spinlock. In
+fact, it complains if you call a function that could potentially sleep, even if the
+call in question would not sleep.
+CONFIG_INIT_DEBUG
+Items marked with __init (or __initdata) are discarded after system initialization
+or module load time. This option enables checks for code that attempts to
+access initialization-time memory after initialization is complete.
+CONFIG_DEBUG_INFO
+This option causes the kernel to be built with full debugging information
+included. You’ll need that information if you want to debug the kernel with gdb.
+You may also want to enable CONFIG_FRAME_POINTER if you plan to use gdb.
+CONFIG_MAGIC_SYSRQ
+Enables the “magic SysRq” key. We look at this key in the section “System
+Hangs,” later in this chapter.
+CONFIG_DEBUG_STACKOVERFLOW
+CONFIG_DEBUG_STACK_USAGE
+These options can help track down kernel stack overflows. A sure sign of a stack
+overflow is an oops listing without any sort of reasonable back trace. The first
+option adds explicit overflow checks to the kernel; the second causes the kernel
+to monitor stack usage and make some statistics available via the magic SysRq
+key.
+CONFIG_KALLSYMS
+This option (under “General setup/Standard features”) causes kernel symbol
+information to be built into the kernel; it is enabled by default. The symbol
+information is used in debugging contexts; without it, an oops listing can give
+you a kernel traceback only in hexadecimal, which is not very useful.
+CONFIG_IKCONFIG
+CONFIG_IKCONFIG_PROC
+These options (found in the “General setup” menu) cause the full kernel configuration
+state to be built into the kernel and to be made available via /proc. Most
+kernel developers know which configuration they used and do not need these
+options (which make the kernel bigger). They can be useful, though, if you are
+trying to debug a problem in a kernel built by somebody else.
+CONFIG_ACPI_DEBUG
+Under “Power management/ACPI.” This option turns on verbose ACPI
+(Advanced Configuration and Power Interface) debugging information, which
+can be useful if you suspect a problem related to ACPI.
+CONFIG_DEBUG_DRIVER
+Under “Device drivers.” Turns on debugging information in the driver core,
+which can be useful for tracking down problems in the low-level support code.
+We’ll look at the driver core in Chapter 14.
+CONFIG_SCSI_CONSTANTS
+This option, found under “Device drivers/SCSI device support,” builds in information
+for verbose SCSI error messages. If you are working on a SCSI driver, you
+probably want this option.
+CONFIG_INPUT_EVBUG
+This option (under “Device drivers/Input device support”) turns on verbose logging
+of input events. If you are working on a driver for an input device, this
+option may be helpful. Be aware of the security implications of this option, however:
+it logs everything you type, including your passwords.
+CONFIG_PROFILING
+This option is found under “Profiling support.” Profiling is normally used for
+system performance tuning, but it can also be useful for tracking down some
+kernel hangs and related problems.
+We will revisit some of the above options as we look at various ways of tracking
+down kernel problems. But first, we will look at the classic debugging technique:
+print statements.
+Debugging by Printing
+The most common debugging technique is monitoring, which in applications programming
+is done by calling printf at suitable points. When you are debugging kernel
+code, you can accomplish the same goal with printk.
+printk
+We used the printk function in earlier chapters with the simplifying assumption that
+it works like printf. Now it’s time to introduce some of the differences.
+One of the differences is that printk lets you classify messages according to their
+severity by associating different loglevels, or priorities, with the messages. You usually
+indicate the loglevel with a macro. For example, KERN_INFO, which we saw
+prepended to some of the earlier print statements, is one of the possible loglevels of
+the message. The loglevel macro expands to a string, which is concatenated to the
+message text at compile time; that’s why there is no comma between the priority and
+the format string in the following examples. Here are two examples of printk commands,
+a debug message and a critical message:
+printk(KERN_DEBUG "Here I am: %s:%i\n", __FILE__, __LINE__);
+printk(KERN_CRIT "I'm trashed; giving up on %p\n", ptr);
+There are eight possible loglevel strings, defined in the header <linux/kernel.h>; we
+list them in order of decreasing severity:
+KERN_EMERG
+Used for emergency messages, usually those that precede a crash.
+KERN_ALERT
+A situation requiring immediate action.
+KERN_CRIT
+Critical conditions, often related to serious hardware or software failures.
+KERN_ERR
+Used to report error conditions; device drivers often use KERN_ERR to report hardware
+difficulties.
+KERN_WARNING
+Warnings about problematic situations that do not, in themselves, create serious
+problems with the system.
+KERN_NOTICE
+Situations that are normal, but still worthy of note. A number of security-related
+conditions are reported at this level.
+KERN_INFO
+Informational messages. Many drivers print information about the hardware
+they find at startup time at this level.
+KERN_DEBUG
+Used for debugging messages.
+Each string (in the macro expansion) represents an integer in angle brackets. Integers
+range from 0 to 7, with smaller values representing higher priorities.
+A printk statement with no specified priority defaults to DEFAULT_MESSAGE_LOGLEVEL,
+specified in kernel/printk.c as an integer. In the 2.6.10 kernel, DEFAULT_MESSAGE_LOGLEVEL
+is KERN_WARNING, but that has been known to change in the past.
+Based on the loglevel, the kernel may print the message to the current console, be it a
+text-mode terminal, a serial port, or a parallel printer. If the priority is less than the
+integer variable console_loglevel, the message is delivered to the console one line at
+a time (nothing is sent unless a trailing newline is provided). If both klogd and syslogd
+are running on the system, kernel messages are appended to /var/log/messages
+(or otherwise treated depending on your syslogd configuration), independent of
+console_loglevel. If klogd is not running, the message won’t reach user space unless
+you read /proc/kmsg (which is often most easily done with the dmesg command).
+When using klogd, you should remember that it doesn’t save consecutive identical
+lines; it only saves the first such line and, at a later time, the number of repetitions it
+received.
+The variable console_loglevel is initialized to DEFAULT_CONSOLE_LOGLEVEL and can be
+modified through the sys_syslog system call. One way to change it is by specifying
+the –c switch when invoking klogd, as specified in the klogd manpage. Note that to
+change the current value, you must first kill klogd and then restart it with the –c
+option. Alternatively, you can write a program to change the console loglevel. You’ll
+find a version of such a program in misc-progs/setlevel.c in the source files provided
+on O’Reilly’s FTP site. The new level is specified as an integer value between 1 and 8,
+inclusive. If it is set to 1, only messages of level 0 (KERN_EMERG) reach the console; if it
+is set to 8, all messages, including debugging ones, are displayed.
+It is also possible to read and modify the console loglevel using the text file /proc/sys/
+kernel/printk. The file hosts four integer values: the current loglevel, the default level
+for messages that lack an explicit loglevel, the minimum allowed loglevel, and the
+boot-time default loglevel. Writing a single value to this file changes the current
+loglevel to that value; thus, for example, you can cause all kernel messages to appear
+at the console by simply entering:
+# echo 8 > /proc/sys/kernel/printk
+It should now be apparent why the hello.c sample had the KERN_ALERT; markers; they
+are there to make sure that the messages appear on the console.
+Redirecting Console Messages
+Linux allows for some flexibility in console logging policies by letting you send messages
+to a specific virtual console (if your console lives on the text screen). By default,
+the “console” is the current virtual terminal. To select a different virtual terminal to
+receive messages, you can issue ioctl(TIOCLINUX) on any console device. The following
+program, setconsole, can be used to choose which console receives kernel messages;
+it must be run by the superuser and is available in the misc-progs directory.
+The following is the program in its entirety. You should invoke it with a single argument
+specifying the number of the console that is to receive messages.
+int main(int argc, char **argv)
+{
+char bytes[2] = {11,0}; /* 11 is the TIOCLINUX cmd number */
+if (argc= =2) bytes[1] = atoi(argv[1]); /* the chosen console */
+else {
+fprintf(stderr, "%s: need a single arg\n",argv[0]); exit(1);
+}
+if (ioctl(STDIN_FILENO, TIOCLINUX, bytes)<0) { /* use stdin */
+fprintf(stderr,"%s: ioctl(stdin, TIOCLINUX): %s\n",
+argv[0], strerror(errno));
+exit(1);
+}
+exit(0);
+}
+setconsole uses the special ioctl command TIOCLINUX, which implements Linuxspecific
+functions. To use TIOCLINUX, you pass it an argument that is a pointer to a
+byte array. The first byte of the array is a number that specifies the requested subcommand,
+and the following bytes are subcommand specific. In setconsole, subcommand
+11 is used, and the next byte (stored in bytes[1]) identifies the virtual console.
+The complete description of TIOCLINUX can be found in drivers/char/tty_io.c, in the
+kernel sources.

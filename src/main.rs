@@ -108,7 +108,7 @@ fn collect(s: &String)->HashMap<char,i32>{
 fn main()->Result<(), Box<dyn std::error::Error>> {
     
     // Open file and read to string
-    let filename=String::from("text.txt");
+    let filename=String::from("plaintext.txt");
     // println!("In file {}", filename);
     let mut f = File::open(filename).expect("file not found");
     let mut contents = String::new();
